@@ -12,6 +12,7 @@
 # V03 : Added a loop which ckecks that the backup volume is mounted (via sshfs) for every volume, otherwise the backup is aborted 
 # V04 : The script uses now "find" instead of the "$dateFileBefore" in order to remove old dumps and old backup. We ensure that if the script fails for whatever reason, old files are removed.
 # V05 : Added some extra logging into the create_tar function, so the removed volumes are now emailed ; updated the sections which checks the mount.
+# V06 : Fix the SSH connection : log instances list to file ; and added the sourcing of ec2 credentials
 
 # This script is meant to be launched from you cloud-manager server. It connects to all running instances, 
 # runs a mysqldump (Debian flavor), mounts the snapshoted LVM volumes and create a TAR on a destination directory. You can disable the mysqldumps if you don't use mysql/ or debian's instances.
@@ -57,9 +58,12 @@
 	MOUNT=/bin/mount
 	FIND=/usr/bin/find
 	TAIL=/usr/bin/tail
+#EC2 tools
+	EC2_CREDS=/home/adminlocal/.diablo
+	EUCA_DESCRIBE=/usr/bin/euca-describe-instances
 # Misc
-	ssh_params="-o StrictHostKeyChecking=no -T -i /root/creds/nuage.pem"
-	ssh_known=/root/.ssh/known_hosts
+	ssh_params="-o StrictHostKeyChecking=no -T -i /home/adminlocal/creds/nuage.pem"
+	ssh_known=/home/adminlocal/.ssh/known_hosts
 	ubuntu_ami="ami-00000053"
 	san_last_byte=47
 # Mail
@@ -67,15 +71,16 @@
 # MySQL
 	mysql_backup_name="mysql-dump"
 	mysql_server_dpkg_name="mysql-server"
-	mysql_backup_user="backup"
-	mysql_backup_pass="backup_pass"
+	mysql_backup_user="mysql_user"
+	mysql_backup_pass="mysql_pass"
 # Date formats 
 	startTime=`date '+%s'`
 	dateMail=`date '+%d/%m at %H:%M:%S'`
 	dateFile=`date '+%d_%m_%Y'`
 	dateFileBefore=`date --date='2 days ago' '+%d_%m_%Y'`
 # Paths
-	email_tmp_file=/root/ebs_backup_status.tmp
+	instances_tmp_file=/tmp/instances_list.tmp
+	email_tmp_file=/tmp/ebs_backup_status.tmp
 	backup_destination=/BACKUPS/EBS-VOL
 	check_mount=`echo $backup_destination | $CUT -d "/" -f 2`
 	mysql_backup_path=/home/mysql/backup
@@ -122,7 +127,10 @@ function get_lvs_id () {
 
 ## Mysql dumps
 function mysql_backup () {
-	euca-describe-instances | $GREP -v -e "RESERVATION" -e "i-0000009c" | while read line; do
+	# We source the EC2 Credientials first
+	. $EC2_CREDS
+	$EUCA_DESCRIBE | $GREP -v -e "RESERVATION" -e "i-0000009c" > $instances_tmp_file
+	while read line; do
 		ip_address=`echo $line | cut -f 5 -d " "`
 		ami=`echo $line | grep $ubuntu_ami | $WC -l`;
 		
@@ -131,7 +139,7 @@ function mysql_backup () {
 		else
 	   	    ssh_connect root
    	    fi
-	done
+	done < $instances_tmp_file
 }
 
 function ssh_connect () {
@@ -148,8 +156,8 @@ function ssh_connect () {
 			fi
 
 			# Dump creation
-			$MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
-
+			#$MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
+			rm $mysql_backup_path/mysql-dump-.tmp
 			# Old dumps deletion
 			$FIND $mysql_backup_path -type f -name "$mysql_backup_name*" -mtime +$backups_retention_days | wc -l > $find_temp_file
 			if [ \`cat $find_temp_file\` -ge 1 ]; then
@@ -222,7 +230,7 @@ echo -e "\n ######################### `get_lvs_name $i` ########################
 		echo $mailnotifications_disabled
 	else
 		echo -e "---------------------------------------" >> $email_tmp_file
-		echo -e "To : $recipient \nSubject : The EBS volumes backup has been aborted the $dateMail ! \n`$CAT $email_tmp_file`" | $SENDMAIL $email_recipient
+		echo -e "To : $recipient \nSubject : The EBS volumes backup has been aborted the $dateMail ! \n`$CAT $email_tmp_file`" | SENDMAIL $email_recipient
 		rm $email_tmp_file
 	fi
 	exit
@@ -258,7 +266,7 @@ echo -e "\n ######################### `get_lvs_name $i` ########################
 	
 	# Mail notification creation
 	backup_size=`$DU -h $backup_destination/\`get_lvs_name $i\` | $CUT -f 1`
-	echo -e "\t $backup_destination/`get_lvs_name $i` - $hours h $minutes m and $seconds seconds. Size - $backup_size \n" >> $email_tmp_file	
+	echo -e "\t $backup_destination/`get_lvs_name $i` - $hours h $minutes m and $seconds seconds. Size - $backup_size \n" >> email_tmp_file	
 done
 
 # 6- Mail notification
@@ -273,3 +281,4 @@ else
 fi
 
 rm $email_tmp_file
+rm $instances_tmp_file
