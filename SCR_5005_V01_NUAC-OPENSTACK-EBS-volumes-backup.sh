@@ -156,8 +156,7 @@ function ssh_connect () {
 			fi
 
 			# Dump creation
-			#$MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
-			rm $mysql_backup_path/mysql-dump-.tmp
+			$MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
 			# Old dumps deletion
 			$FIND $mysql_backup_path -type f -name "$mysql_backup_name*" -mtime +$backups_retention_days | wc -l > $find_temp_file
 			if [ \`cat $find_temp_file\` -ge 1 ]; then
