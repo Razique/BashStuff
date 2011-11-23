@@ -9,10 +9,11 @@
 # V00 : Initial version
 # V01 : The "create_tar" function has been modified, is uses now the second parameter in order to get the volume name
 # V02 : In order to speed up the process, md5sum was replaced by sha1sum
-# V03 : Added a loop which ckecks that the backup volume is mounted (via sshfs) for every volume, otherwise the backup is aborted 
+# V03 : Add a loop which ckecks that the backup volume is mounted (via sshfs) for every volume, otherwise the backup is aborted 
 # V04 : The script uses now "find" instead of the "$dateFileBefore" in order to remove old dumps and old backup. We ensure that if the script fails for whatever reason, old files are removed.
-# V05 : Added some extra logging into the create_tar function, so the removed volumes are now emailed ; updated the sections which checks the mount.
+# V05 : Add some extra logging into the create_tar function, so the removed volumes are now emailed ; updated the sections which checks the mount.
 # V06 : Fix the SSH connection : log instances list to file ; and added the sourcing of ec2 credentials
+# V07 : Add a nice priority on the mysqldump
 
 # This script is meant to be launched from you cloud-manager server. It connects to all running instances, 
 # runs a mysqldump (Debian flavor), mounts the snapshoted LVM volumes and create a TAR on a destination directory. You can disable the mysqldumps if you don't use mysql/ or debian's instances.
@@ -58,6 +59,7 @@
 	MOUNT=/bin/mount
 	FIND=/usr/bin/find
 	TAIL=/usr/bin/tail
+	NICE=/usr/bin/nice
 #EC2 tools
 	EC2_CREDS=/home/adminlocal/.diablo
 	EUCA_DESCRIBE=/usr/bin/euca-describe-instances
@@ -156,7 +158,7 @@ function ssh_connect () {
 			fi
 
 			# Dump creation
-			$MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
+			$NICE -p 10 $MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
 			# Old dumps deletion
 			$FIND $mysql_backup_path -type f -name "$mysql_backup_name*" -mtime +$backups_retention_days | wc -l > $find_temp_file
 			if [ \`cat $find_temp_file\` -ge 1 ]; then
