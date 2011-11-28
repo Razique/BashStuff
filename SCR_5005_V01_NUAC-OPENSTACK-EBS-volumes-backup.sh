@@ -3,7 +3,7 @@
 # Shell : Bash
 # Description : Small nova-volumes backup script
 # Author : razique.mahroua@gmail.com
-# Actual version : Version 08
+# Actual version : Version 09
 
 # 		Revision note    
 # V00 : Initial version
@@ -16,6 +16,8 @@
 # V07 : Add a nice priority on the mysqldump
 # V08 : Turn the LVM Snapshots into a function make it easier to enable/ disable the function
 #		Add nova-api restart before euca-describe-instances
+# V09 : Remove the instances retrieval from the myslq_dump function
+#		Renice mysqldump process
 
 # This script is meant to be launched from you cloud-manager server. It connects to all running instances, 
 # runs a mysqldump (Debian flavor), mounts the snapshoted LVM volumes and create a TAR on a destination directory. You can disable the mysqldumps if you don't use mysql/ or debian's instances.
@@ -35,7 +37,7 @@
 	backups_retention_days=7
 	enable_checksum=0
 	enable_mysql_dump=1
-	enable_lvmsnapshots=0
+	enable_lvmsnapshots=1
 	enable_mail_notification=1
 # Binaries
 	MOUNT=/bin/mount
@@ -110,6 +112,13 @@ else
 	$CAT /dev/null > $email_tmp_file
 fi
 
+# We restart nova-api (in order to avoid lazy sessions and instances retrieval fail)
+service nova-api restart
+
+# We source the EC2 Credientials and retrieve running instances
+. $EC2_CREDS
+$EUCA_DESCRIBE | $GREP -v -e "RESERVATION" -e "i-0000009c" > $instances_tmp_file
+
 echo -e "Backup Start Time - $dateMail" >> $email_tmp_file
 echo -e "Current retention - $backups_retention_days days \n" >> $email_tmp_file
 
@@ -133,12 +142,6 @@ function get_lvs_id () {
 
 ## Mysql dumps
 function mysql_backup () {
-	# We source the EC2 Credientials first
-	. $EC2_CREDS
-	# We restart nova-api (in order to avoid lazy sessions and instances retrieval fail)
-	service nova-api restart
-
-	$EUCA_DESCRIBE | $GREP -v -e "RESERVATION" -e "i-0000009c" > $instances_tmp_file
 	while read line; do
 		ip_address=`echo $line | cut -f 5 -d " "`
 		ami=`echo $line | grep $ubuntu_ami | $WC -l`;
@@ -166,7 +169,8 @@ function ssh_connect () {
 			fi
 
 			# Dump creation
-			$NICE -n 10 $MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
+			$NICE -n 15 $MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
+
 			# Old dumps deletion
 			$FIND $mysql_backup_path -type f -name "$mysql_backup_name*" -mtime +$backups_retention_days | wc -l > $find_temp_file
 			if [ \`cat $find_temp_file\` -ge 1 ]; then
@@ -221,7 +225,7 @@ function lvm_snap() {
 	for i in `get_lvs`; do
 		startTimeLVM=`date '+%s'`
 		
-	echo -e "\n ######################### `get_lvs_name $i` #########################"
+		echo -e "\n ######################### `get_lvs_name $i` #########################"
 	
 		# We ensure that a backup disk is mounted before proceeding
 		if [ `$MOUNT | $GREP "$check_mount" | $WC -l` -eq 1 ]; then
@@ -241,29 +245,29 @@ function lvm_snap() {
 	
 		echo -e "\n STEP 1 :Snapshot creation"
 	 	create_snapshot `get_lvs_name $i` $i $snapshot_max_size 
-	
+		
 	 	echo -e "\n STEP 2 : Table partition creation"
 	 	sleep 1;
 	 	$KPARTX -av $i-SNAPSHOT
-	
+		
 	 	echo -e "\n STEP 3 : Volumes mounting"
 	 	sleep 1;
 		$MOUNT "/dev/mapper/nova--volumes-volume--`get_lvs_id $i`--SNAPSHOT1" $mount_point
-	
+		
 		echo -e "\n STEP 4 : Archive creation"
 		create_tar $i `get_lvs_name $i`
-	 
-	 	echo -e "\n STEP 5 : Umount volume"
+		
+		echo -e "\n STEP 5 : Umount volume"
 	 	$UMOUNT $mount_point
-	 
-	 	echo -e "\n STEP 6 : Table partition remove"
+		
+		echo -e "\n STEP 6 : Table partition remove"
 	 	sleep 1;
 	 	$KPARTX -d $i-SNAPSHOT
-	 
-	 	echo -e "\n STEP 7 : Snapshot deletion "
+		
+		echo -e "\n STEP 7 : Snapshot deletion "
 		sleep 1;
 	 	$LVREMOVE -f $i-SNAPSHOT
-	
+		
 		#Time accounting per volume
 		time_accounting `date '+%s'` $startTimeLVM
 		
