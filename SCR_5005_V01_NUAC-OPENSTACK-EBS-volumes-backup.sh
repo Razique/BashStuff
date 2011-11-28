@@ -3,7 +3,7 @@
 # Shell : Bash
 # Description : Small nova-volumes backup script
 # Author : razique.mahroua@gmail.com
-# Actual version : Version 00
+# Actual version : Version 08
 
 # 		Revision note    
 # V00 : Initial version
@@ -14,6 +14,8 @@
 # V05 : Add some extra logging into the create_tar function, so the removed volumes are now emailed ; updated the sections which checks the mount.
 # V06 : Fix the SSH connection : log instances list to file ; and added the sourcing of ec2 credentials
 # V07 : Add a nice priority on the mysqldump
+# V08 : Turn the LVM Snapshots into a function make it easier to enable/ disable the function
+#		Add nova-api restart before euca-describe-instances
 
 # This script is meant to be launched from you cloud-manager server. It connects to all running instances, 
 # runs a mysqldump (Debian flavor), mounts the snapshoted LVM volumes and create a TAR on a destination directory. You can disable the mysqldumps if you don't use mysql/ or debian's instances.
@@ -33,6 +35,7 @@
 	backups_retention_days=7
 	enable_checksum=0
 	enable_mysql_dump=1
+	enable_lvmsnapshots=0
 	enable_mail_notification=1
 # Binaries
 	MOUNT=/bin/mount
@@ -60,6 +63,7 @@
 	FIND=/usr/bin/find
 	TAIL=/usr/bin/tail
 	NICE=/usr/bin/nice
+
 #EC2 tools
 	EC2_CREDS=/home/adminlocal/.diablo
 	EUCA_DESCRIBE=/usr/bin/euca-describe-instances
@@ -67,7 +71,6 @@
 	ssh_params="-o StrictHostKeyChecking=no -T -i /home/adminlocal/creds/nuage.pem"
 	ssh_known=/home/adminlocal/.ssh/known_hosts
 	ubuntu_ami="ami-00000053"
-	san_last_byte=47
 # Mail
 	email_recipient="razique.mahroua@gmail.com"
 # MySQL
@@ -90,7 +93,8 @@
 	find_temp_file=/tmp/find_result.tmp
 # Messages
 	mailnotifications_disabled="The mail notifications are disabled"
-	mysqldump_disabled="The mysqldumps are disabled"
+	mysqldump_disabled="The mysqldumps are disabled..."
+	lvmsnap_disabled="The lv snapshots are disabled..."
 	mysql_not_instaled="mysql is not installed, nothing to dump"
 	dir_exists="The backup directory exists, nothing to do..."
 	old_backups_not_found="Not any old backups to remove..."
@@ -131,6 +135,9 @@ function get_lvs_id () {
 function mysql_backup () {
 	# We source the EC2 Credientials first
 	. $EC2_CREDS
+	# We restart nova-api (in order to avoid lazy sessions and instances retrieval fail)
+	service nova-api restart
+
 	$EUCA_DESCRIBE | $GREP -v -e "RESERVATION" -e "i-0000009c" > $instances_tmp_file
 	while read line; do
 		ip_address=`echo $line | cut -f 5 -d " "`
@@ -144,6 +151,7 @@ function mysql_backup () {
 	done < $instances_tmp_file
 }
 
+## SSH Connection
 function ssh_connect () {
 	$CAT /dev/null > $ssh_known 
 	$SSH $ssh_params $1@$ip_address <<-EOF
@@ -158,7 +166,7 @@ function ssh_connect () {
 			fi
 
 			# Dump creation
-			$NICE -p 10 $MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
+			$NICE -n 10 $MYSQLDUMP --all-databases -u $mysql_backup_user -p$mysql_backup_pass > $mysql_backup_path/$mysql_backup_name-$dateFile.sql;
 			# Old dumps deletion
 			$FIND $mysql_backup_path -type f -name "$mysql_backup_name*" -mtime +$backups_retention_days | wc -l > $find_temp_file
 			if [ \`cat $find_temp_file\` -ge 1 ]; then
@@ -180,12 +188,12 @@ function time_accounting () {
 	seconds=$(($timeDiff % 60))
 }
 
-# 2- Snapshot creation
+# Snapshot creation
 function create_snapshot () {
 	$LVCREATE --size $3G --snapshot --name $1-SNAPSHOT $2;
 }
 
-# 3- File and applications backups
+# File and applications backups
 function create_tar () {
 	if [ -d $backup_destination/$2 ]; then
 		echo $dir_exists;
@@ -208,69 +216,78 @@ function create_tar () {
 	fi
 }
 
-# 4- Databases backup
+# Iteration through LVM volumes
+function lvm_snap() {
+	for i in `get_lvs`; do
+		startTimeLVM=`date '+%s'`
+		
+	echo -e "\n ######################### `get_lvs_name $i` #########################"
+	
+		# We ensure that a backup disk is mounted before proceeding
+		if [ `$MOUNT | $GREP "$check_mount" | $WC -l` -eq 1 ]; then
+			echo -e $mount_ok >> $email_tmp_file
+		else
+			echo $mount_ko >> $email_tmp_file
+	
+		if [ $enable_mail_notification -eq 0 ]; then
+			echo $mailnotifications_disabled
+		else
+			echo -e "---------------------------------------" >> $email_tmp_file
+			echo -e "To : $recipient \nSubject : The EBS volumes backup has been aborted the $dateMail ! \n`$CAT $email_tmp_file`" |	 SENDMAIL $email_recipient
+			rm $email_tmp_file
+		fi
+		exit
+		fi
+	
+		echo -e "\n STEP 1 :Snapshot creation"
+	 	create_snapshot `get_lvs_name $i` $i $snapshot_max_size 
+	
+	 	echo -e "\n STEP 2 : Table partition creation"
+	 	sleep 1;
+	 	$KPARTX -av $i-SNAPSHOT
+	
+	 	echo -e "\n STEP 3 : Volumes mounting"
+	 	sleep 1;
+		$MOUNT "/dev/mapper/nova--volumes-volume--`get_lvs_id $i`--SNAPSHOT1" $mount_point
+	
+		echo -e "\n STEP 4 : Archive creation"
+		create_tar $i `get_lvs_name $i`
+	 
+	 	echo -e "\n STEP 5 : Umount volume"
+	 	$UMOUNT $mount_point
+	 
+	 	echo -e "\n STEP 6 : Table partition remove"
+	 	sleep 1;
+	 	$KPARTX -d $i-SNAPSHOT
+	 
+	 	echo -e "\n STEP 7 : Snapshot deletion "
+		sleep 1;
+	 	$LVREMOVE -f $i-SNAPSHOT
+	
+		#Time accounting per volume
+		time_accounting `date '+%s'` $startTimeLVM
+		
+		# Mail notification creation
+		backup_size=`$DU -h $backup_destination/\`get_lvs_name $i\` | $CUT -f 1`
+		echo -e "\t $backup_destination/`get_lvs_name $i` - $hours h $minutes m and $seconds seconds. Size - $backup_size \n" >> 	email_tmp_file	
+	done
+}
+
+# 1- Databases backup
 if [ $enable_mysql_dump -eq 0 ]; then
 	echo $mysqldump_disabled >> $email_tmp_file
 else
 	mysql_backup
 fi
 
-# 5-Iteration through LVM volumes
-for i in `get_lvs`; do
-	startTimeLVM=`date '+%s'`
-	
-echo -e "\n ######################### `get_lvs_name $i` #########################"
+# 2- LV backup
+if [ $enable_lvmsnapshots -eq 0 ]; then
+	echo $lvmsnap_disabled >> $email_tmp_file
+else
+	lvm_snap
+fi
 
-	# We ensure that a backup disk is mounted before proceeding
-	if [ `$MOUNT | $GREP "$check_mount" | $WC -l` -eq 1 ]; then
-		echo -e $mount_ok >> $email_tmp_file
-	else
-		echo $mount_ko >> $email_tmp_file
-
-	if [ $enable_mail_notification -eq 0 ]; then
-		echo $mailnotifications_disabled
-	else
-		echo -e "---------------------------------------" >> $email_tmp_file
-		echo -e "To : $recipient \nSubject : The EBS volumes backup has been aborted the $dateMail ! \n`$CAT $email_tmp_file`" | SENDMAIL $email_recipient
-		rm $email_tmp_file
-	fi
-	exit
-	fi
-
-	echo -e "\n STEP 1 :Snapshot creation"
- 	create_snapshot `get_lvs_name $i` $i $snapshot_max_size 
-
- 	echo -e "\n STEP 2 : Table partition creation"
- 	sleep 1;
- 	$KPARTX -av $i-SNAPSHOT
-
- 	echo -e "\n STEP 3 : Volumes mounting"
- 	sleep 1;
-	$MOUNT "/dev/mapper/nova--volumes-volume--`get_lvs_id $i`--SNAPSHOT1" $mount_point
-
-	echo -e "\n STEP 4 : Archive creation"
-	create_tar $i `get_lvs_name $i`
- 
- 	echo -e "\n STEP 5 : Umount volume"
- 	$UMOUNT $mount_point
- 
- 	echo -e "\n STEP 6 : Table partition remove"
- 	sleep 1;
- 	$KPARTX -d $i-SNAPSHOT
- 
- 	echo -e "\n STEP 7 : Snapshot deletion "
-	sleep 1;
- 	$LVREMOVE -f $i-SNAPSHOT
-
-	#Time accounting per volume
-	time_accounting `date '+%s'` $startTimeLVM
-	
-	# Mail notification creation
-	backup_size=`$DU -h $backup_destination/\`get_lvs_name $i\` | $CUT -f 1`
-	echo -e "\t $backup_destination/`get_lvs_name $i` - $hours h $minutes m and $seconds seconds. Size - $backup_size \n" >> email_tmp_file	
-done
-
-# 6- Mail notification
+# 3- Mail notification
 if [ $enable_mail_notification -eq 0 ]; then
 	echo $mailnotifications_disabled
 else
@@ -281,5 +298,6 @@ else
 	echo -e "To : $recipient \nSubject : The EBS volumes have been backed up in $hours h and $minutes mn the $dateMail \n`$CAT $email_tmp_file`" | $SENDMAIL $email_recipient
 fi
 
+# 4- Cleaning
 rm $email_tmp_file
 rm $instances_tmp_file
