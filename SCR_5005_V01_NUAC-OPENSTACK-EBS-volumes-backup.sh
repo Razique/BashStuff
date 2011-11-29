@@ -237,7 +237,7 @@ function lvm_snap() {
 			echo $mailnotifications_disabled
 		else
 			echo -e "---------------------------------------" >> $email_tmp_file
-			echo -e "To : $recipient \nSubject : The EBS volumes backup has been aborted the $dateMail ! \n`$CAT $email_tmp_file`" |	 SENDMAIL $email_recipient
+			echo -e "To : $recipient \nSubject : The EBS volumes backup has been aborted the $dateMail ! \n`$CAT $email_tmp_file`" | $SENDMAIL $email_recipient
 			rm $email_tmp_file
 		fi
 		exit
@@ -273,7 +273,7 @@ function lvm_snap() {
 		
 		# Mail notification creation
 		backup_size=`$DU -h $backup_destination/\`get_lvs_name $i\` | $CUT -f 1`
-		echo -e "\t $backup_destination/`get_lvs_name $i` - $hours h $minutes m and $seconds seconds. Size - $backup_size \n" >> 	email_tmp_file	
+		echo -e "\t $backup_destination/`get_lvs_name $i` - $hours h $minutes m and $seconds seconds. Size - $backup_size \n" >> $email_tmp_file	
 	done
 }
 
