@@ -1,3 +1,23 @@
-This repo will contains every usefull scripts or snippets.
-Those scrips are mainly written in Bash. 
-For every script, it's usage is available in the header
+
+ /---\______
+|	    	|
+| NETWORKING|
+|___________|
+	|
+	|----------- SCR_2012_V00_NUAC-OTHER-Dual-wan-routing : Dual WAN routing script
+	|----------- SCR_5018_V00_NUAC-IP-Network-creation : IP Network Calculator for a given range, generate the ip addr add output 
+ /---\______
+|	    	|
+| SYSTEMS   |
+|___________|
+	|	    	 /---\______
+	|	    	|	    	|	
+	|-----------| OpenStack	|
+	|	    	|___________|
+	|				|----------- SCR_5005_V01_NUAC-OPENSTACK-EBS-volumes-backup : nova-volume backup script
+	|				|----------- SCR_5006_V00_NUAC-OPENSTACK-DRP-OpenStack : Disaster Recovery Process script
+	|				|----------- SCR_5007_V00_NUAC-OPENSTACK-EBS-volumes-backup-to-gzip : nova-volume backup script (creates images)
+	|				|----------- SCR_5008_V00_NUAC-OPENSTACK-Nova-compute-images-prunning : compute-node images cache cleaning script
+	|				|----------- SCR_5009_V00_NUAC-OPENSTACK-Cloud-controller-backup : nova components (files) backup script
+	|				|----------- SCR_5016_V00_NUAC-OPENSTACK-Swap-provisionning : dynamic swap creation for instances based on flavor
+	|----------- SCR_2012_V00_NUAC-OTHER-Dual-wan-routing : Dual WAN routing script
