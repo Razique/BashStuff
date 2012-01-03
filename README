@@ -22,4 +22,5 @@ Usefull scripts...
 	    |-- SCR_5008_V00_NUAC-OPENSTACK-Nova-compute-images-prunning : compute-node images cache cleaning script
 	    |-- SCR_5009_V00_NUAC-OPENSTACK-Cloud-controller-backup : nova components (files) backup script
 	    |-- SCR_5016_V00_NUAC-OPENSTACK-Swap-provisionning : dynamic swap creation for instances based on flavor
+	    |-- SCR_5019_V00_NUAC-OPENSTACK-nova-volume-check.sh : nova-volume disk availability check on instances
 	|-- SCR_2012_V00_NUAC-OTHER-Dual-wan-routing : Dual WAN routing script
