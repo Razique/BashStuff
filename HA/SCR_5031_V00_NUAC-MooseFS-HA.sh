@@ -18,53 +18,76 @@
 
 # Directories
 	mfs_dir="/var/lib/mfs"
-	carp_master=172.16.50.11
+	carp_master=172.16.40.45
 
 sleep 2
 mkdir -p $mfs_dir/{bak,tmp}
 
 if [[ `$IP addr sh | $GREP "inet $carp_master"` ]]; then
-	logger "Saving active files..."
+	logger "#1- Saving active files..."
 	cp $mfs_dir/changelog.* $mfs_dir/tmp 
 	cp $mfs_dir/metadata.* $mfs_dir/tmp
 
-	logger "Restarting the mfsmetalogger service..."
-	kill `pidof $MFSMETALOGGER` && $MFSMETALOGGER start
-
-	logger "Running mfsmetarestore..."
-	$MFSMETARESTORE -a
+	
+	if [[ -z `pidof $MFSMASTER` ]]; then
+		logger "#2- Running mfsmetarestore..."
+		$MFSMETARESTORE -a
+	else
+		logger "#2- $MFSMASTER running, skipping mfsmetarestore.."
+	fi
 
 	if [[ -f $mfs_dir/metadata.mfs ]]; then
 		if [[ -e $mfs_dir/sessions_ml ]]; then
 			mv $mfs_dir/sessions_ml.mfs $mfs_dir/sessions.mfs
 		fi
 
-		logger "Starting the mfsmaster service..."
-		$MFSMASTER start
+		if [[ -z `pidof $MFSMASTER` ]]; then
+			logger "#3- Starting the mfsmaster service..."
+			$MFSMASTER start
+		else
+			logger "#3- $MFSMASTER already running, skipping..."
+		fi
 
-		logger "Starting the mfscgiserv service..."
-		$MFSCGISERV start
+		if [[ -z `ps aux | $GREP -v grep | $GREP "$MFSCGISERV"` ]]; then
+			logger "#4- Starting the mfscgiserv service..."
+			$MFSCGISERV start
+		else
+			logger "#4- $MFSCGISERV already running, skipping..."
+		fi
 
-		logger "Starting the mfsmetalogger service..."
-		if [[ -e $MFSMETALOGGER ]]; then
-			$MFSMETALOGGER start
+		if [[ -z `pidof $MFSMETALOGGER` ]]; then
+			logger "#5- Attempting to launch the mfsmetalogger service..."
+			if [[ -e $MFSMETALOGGER ]]; then
+				$MFSMETALOGGER start
+			fi
+		else
+			logger "#5- Restart the mfsmetalogger service..."
+			$MFSMETALOGGER stop && $MFSMETALOGGER start
 		fi
 	fi
+
 else
-	logger "Stopping the mfsmaster service..."
 	if [[ -n `pidof $MFSMASTER` ]]; then
-		kill `pidof $MFSMASTER`
+		logger "#1- Stopping the mfsmaster service..."
+		$MFSMASTER stop
+	else
+		logger "#1 - $MFSMASTER is not running, skipping..."
 	fi
 
-	logger "Restarting the mfsmetalogger service..."
 	if [[ -n `pidof $MFSMETALOGGER` ]]; then
-		kill `pidof $MFSMETALOGGER` && $MFSMETALOGGER start
+		logger "#2- Restarting the mfsmetalogger service..."
+		$MFSMETALOGGER stop && $MFSMETALOGGER start
+	else
+		logger "#2- Starting the mfsmetalogger service..."
+		$MFSMETALOGGER start
 	fi
 
-	logger "Stopping the mfscgiserv service..."
-	if [[ `ps aux | $GREP -v grep | $GREP "$MFSCGISERV" | wc -l` -ne "0" ]]; then
-		MFSCGISERV_PID=`ps aux | $GREP -v grep | $GREP $MFSCGISERV | $AWK '{print $2}'`
+	if [[ -n `ps aux | $GREP -v grep | $GREP "$MFSCGISERV"` ]]; then
+		logger "#3- Stopping the mfscgiserv service..."
+		MFSCGISERV_PID=`ps aux | $GREP -v grep | $GREP $MFSCGISERV | $AWK '{print $3}'`
 		kill $MFSCGISERV_PID
+	else
+		logger "#3- $MFSCGISERV is not running, skipping..."
 	fi
 
 	if [[ -f $mfs_dir/metadata.* ]]; then
@@ -75,4 +98,5 @@ else
 	fi
 fi
 
+logger "Saving metadatas files..."
 tar -cvf $mfs_dir/bak/metabak.$(date +%s).tgz $mfs_dir/tmp/*
